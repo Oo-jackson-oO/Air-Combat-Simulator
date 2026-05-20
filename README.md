@@ -1,11 +1,54 @@
-<div align="center">
+# 空战模拟系统：无尽长空 (Air Combat Simulator)
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+本作是一款运行在浏览器端、基于 HTML5 Canvas 和 React 构建的 2D 空战模拟游戏。玩家将扮演歼-20威龙战机的飞行员，在一望无际的大洋上空迎击不断袭来的敌机与巨型战术打击战机。
 
-  <h1>Built with AI Studio</h2>
+## 游戏特性
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+- **流畅的操控手感**：支持全向移动以及喷气冲刺（Dash）规避伤害。
+- **丰富的战斗系统**：
+  - 自动追踪且高速飞行的空空导弹。
+  - 随得分递增出现的 **巨型战术打击目标 (BOSS)**。
+  - 敌方具备预警机制的高伤激光武器和半制导导弹。
+  - 敌我战机物理碰撞伤害检测，擦碰即毁。
+- **现代化 UI HUD**：
+  - 各类状态仪表盘（空速、生命值、冲刺冷却、实时帧率等）。
+  - Boss 接近时的独立预警系统、血条显示和离屏雷达指向。
+  - 震屏特效、动态粒子拖尾及战机爆炸碎片特效。
+- **音频系统**：包含发射导弹、引擎喷气冲刺、敌机被毁以及 Boss 接近的压迫感警报音效。
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+## 游玩说明
 
-</div>
+### 操控方式
+
+- **W/A/S/D** 或 **方向键**：控制战机的机动飞行。
+- **鼠标左键**：连续向鼠标光标所在方向发射空空导弹。
+- **鼠标右键**：向当前机尾反方向执行【喷气冲刺】以快速突围或规避攻击。每次使用后需 5 秒冷却，但击毁敌机可迅速重置该技能的冷却时间。
+
+### 战斗规则
+
+1. 你的初始生命值为固定值（擦碰敌机会导致直接坠毁，请保持距离）。
+2. 在雷达和中心视野内击毁不断刷新的蓝色敌机，累计获取分数。
+3. 导弹发射遵循真实的物理转弯速率限制，请把握好发射角度和时机。
+4. 得分每累计 100 分，将有一架「战术打击巨兽」（BOSS战机）突入战场。请注意屏幕顶部的警报及边缘红三角指示器。
+
+## 技术架构
+
+- **前端框架**：React + Vite5 + TypeScript
+- **状态及界面**：Tailwind CSS 的 Utility Classes（用于构建高科技 HUD 界面和主菜单）。
+- **渲染核心**：完全基于 HTML5 `<canvas>` 的 2D 绘图环境。抽离了带有独立生命周期的游戏引擎模块来实现物理帧和渲染帧。
+- **主要逻辑目录**：
+  - `src/components/AirCombatPlatform.tsx`：游戏视窗组件与 React HUD 层呈现。
+  - `src/game/controller.ts`：游戏主循环、敌机生成调度以及物理碰撞处理机制。
+  - `src/game/model.ts`：各实体类（战机、激光、导弹）行为实现。
+  - `src/game/audio.ts`：基于 Web Audio API 纯合成（Oscillator）打造各种复古电子风音效。
+
+## 本地开发指南
+
+首次拉取代码后，在项目根目录运行安装指令并启动本地开发服务器：
+
+```bash
+npm install
+npm run dev
+```
+
+并在浏览器中打开 http://localhost:3000 进行预览和游玩。
