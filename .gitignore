@@ -1,8 +1,42 @@
+# Dependencies
 node_modules/
-build/
+
+# Build outputs
 dist/
+build/
 coverage/
-.DS_Store
-*.log
-.env*
+
+# Environment files
+.env
+.env.local
+.env.*.local
 !.env.example
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# TypeScript
+*.tsbuildinfo
+
+# Vite
+.vite/
+.cache/
+
+# Testing
+*.log
+
+# Claude Code
+.claude/
+
+images/
+docs/
