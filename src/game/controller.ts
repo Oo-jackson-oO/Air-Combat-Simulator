@@ -1,5 +1,20 @@
 import { Vector2D, Battlefield, Fighter, Missile, Laser } from './model';
-import { GameSnapshot, ICombatJudger, IMissile, IFighter, IAIController, IRadarSystem, NetMessageType, INetworkProtocol } from './interfaces';
+import {
+  GameSnapshot,
+  GameViewSnapshot,
+  ICombatJudger,
+  IMissile,
+  IFighter,
+  IAIController,
+  IRadarSystem,
+  NetworkHudSnapshot,
+  NetworkPlayerInput,
+  FighterSnapshot,
+  StateSnapshotPayload,
+} from './interfaces';
+import { JsonNetworkProtocol } from './network-protocol.ts';
+import { NetworkBattleSession, readBrowserNetworkJoinConfig } from './network-client.ts';
+import { interpolateFighterCorrection, predictLocalFighter } from './network-sync.ts';
 
 import { audioManager } from './audio';
 
@@ -11,7 +26,7 @@ export class InputHandler {
   public mouseDown = false;
   public rightMouseDown = false;
   public rightMousePressed = false;
-  
+
   constructor() {
     window.addEventListener('keydown', (e) => this.keys[e.code] = true);
     window.addEventListener('keyup', (e) => this.keys[e.code] = false);
@@ -51,16 +66,16 @@ export class AsyncCombatJudger implements ICombatJudger {
           if (f.hp <= 0) continue;
           // 不要打自己人
           const isPlayerMissile = (m as any).isPlayerMissile;
-          if (isPlayerMissile === f.isPlayer) continue; 
-          
+          if (isPlayerMissile === f.isPlayer) continue;
+
           if (this.JudgeHit(m, f)) {
             f.TakeDamage(m.damage);
             m.Detonate();
             if (f.hp <= 0 && onKill) {
-               onKill(isPlayerMissile, (f as any).isBoss, f.position.x, f.position.y);
+              onKill(isPlayerMissile, (f as any).isBoss, f.position.x, f.position.y);
             } else {
-               audioManager.playExplosionSound();
-               if (this.onExplosion) this.onExplosion(f.position.x, f.position.y);
+              audioManager.playExplosionSound();
+              if (this.onExplosion) this.onExplosion(f.position.x, f.position.y);
             }
             break;
           }
@@ -96,10 +111,10 @@ export class AsyncCombatJudger implements ICombatJudger {
                 f.TakeDamage(l.damage);
                 l.hasHit = true;
                 if (f.hp <= 0 && onKill) {
-                   onKill(false, false, f.position.x, f.position.y);
+                  onKill(false, false, f.position.x, f.position.y);
                 } else {
-                   audioManager.playExplosionSound();
-                   if (this.onExplosion) this.onExplosion(f.position.x, f.position.y);
+                  audioManager.playExplosionSound();
+                  if (this.onExplosion) this.onExplosion(f.position.x, f.position.y);
                 }
               }
             }
@@ -109,7 +124,7 @@ export class AsyncCombatJudger implements ICombatJudger {
     });
   }
 
-  DistanceToLine(pt: {x: number, y: number}, origin: {x: number, y: number}, heading: number, length: number): number {
+  DistanceToLine(pt: { x: number, y: number }, origin: { x: number, y: number }, heading: number, length: number): number {
     const endX = origin.x + Math.cos(heading) * length;
     const endY = origin.y + Math.sin(heading) * length;
     const l2 = length * length;
@@ -123,7 +138,7 @@ export class AsyncCombatJudger implements ICombatJudger {
 
   JudgeHit(missile: IMissile, fighter: IFighter): boolean {
     const dist = new Vector2D(missile.position.x, missile.position.y)
-        .distanceTo(fighter.position);
+      .distanceTo(fighter.position);
     return dist < 30; // 碰撞半径
   }
 
@@ -140,10 +155,10 @@ export class EnemyAI implements IAIController {
     for (const enemy of enemies) {
       if (enemy.hp <= 0) continue;
       const dist = new Vector2D(enemy.position.x, enemy.position.y).distanceTo(player.position);
-      
+
       const targetDir = new Vector2D(player.position.x - enemy.position.x, player.position.y - enemy.position.y).normalize();
       const currentHeadingV = new Vector2D(Math.cos(enemy.heading), Math.sin(enemy.heading));
-      
+
       // 简单平滑转向
       const turnSpeedMultiplier = enemy.isBoss ? 0.8 : 2;
       enemy.heading = Math.atan2(
@@ -156,40 +171,40 @@ export class EnemyAI implements IAIController {
       } else {
         enemy.speed = enemy.speed + (200 - enemy.speed) * dt; // 减速狗斗
       }
-      
+
       // Attacks
       if (enemy.isBoss) {
         // High prob of laser
         if (enemy.laserCooldown <= 0) {
-           enemy.laserCooldown = 5.0; // Fixed pattern or random
-           if (Math.random() < 0.8) {
-             actions.lasers.push(new Laser(enemy.position.x, enemy.position.y, enemy.heading));
-           } else {
-             // Low prob semi-homing missile
-             const m = enemy.Fire(player);
-             if (m) {
-               m.isPlayerMissile = false;
-               m.homingType = 'semi';
-               actions.missiles.push(m);
-             }
-           }
+          enemy.laserCooldown = 5.0; // Fixed pattern or random
+          if (Math.random() < 0.8) {
+            actions.lasers.push(new Laser(enemy.position.x, enemy.position.y, enemy.heading));
+          } else {
+            // Low prob semi-homing missile
+            const m = enemy.Fire(player);
+            if (m) {
+              m.isPlayerMissile = false;
+              m.homingType = 'semi';
+              actions.missiles.push(m);
+            }
+          }
         }
       } else {
         // Decreased fire rate: 0.005 instead of 0.01
         if (Math.random() < 0.005 * (dt * 60) && dist < 500) {
-           const m = enemy.Fire(player);
-           if (m) {
-             m.isPlayerMissile = false; 
-             m.homingType = 'none'; // Straight line
-             actions.missiles.push(m);
-           }
+          const m = enemy.Fire(player);
+          if (m) {
+            m.isPlayerMissile = false;
+            m.homingType = 'none'; // Straight line
+            actions.missiles.push(m);
+          }
         }
       }
     }
     return actions;
   }
-  Execute() {}
-  SetDifficulty() {}
+  Execute() { }
+  SetDifficulty() { }
 }
 
 export class RadarSystem implements IRadarSystem {
@@ -204,71 +219,218 @@ export class RadarSystem implements IRadarSystem {
   SetRange(r: number) { this.range = r; }
 }
 
-// 预留网络层 (空实现)
-export class SimulatedNetwork implements INetworkProtocol {
-  Serialize(data: any, type: NetMessageType) { return JSON.stringify({ type, data }); }
-  Deserialize(payload: string) { return JSON.parse(payload); }
-  GetMessageType(payload: string) { return JSON.parse(payload).type as NetMessageType; }
+// 预留网络层，当前直接复用共享 JSON 协议实现。
+export class SimulatedNetwork extends JsonNetworkProtocol { }
+
+interface CorrectionState {
+  from: FighterSnapshot;
+  to: FighterSnapshot;
+  startedAtMs: number;
+  durationMs: number;
 }
+
+const PREDICTION_CONFIG = {
+  tickDurationMs: 100,
+  speedStepPerTick: 35,
+  minSpeed: 80,
+  maxSpeed: 440,
+  turnStepPerTick: 0.22,
+};
+
+const CORRECTION_DURATION_MS = 180;
 
 // --- Main Engine ---
 export class GameEngine {
   private battlefield = new Battlefield();
   private lastTime = 0;
   private fps = 0;
-  private judger = new AsyncCombatJudger();
-  private ai = new EnemyAI();
-  private radar = new RadarSystem();
-  private status: 'playing' | 'defeat' = 'playing';
-  private score = 0;
-  private lastBossScore = 0;
-  private bossCooldownTimer = 0;
-  private bossSpawning = false;
-  private bossSpawnTimer = 0;
-  private bossIndicatorTimer = 0;
-  private timeSinceLastSpawn = 0;
+  private authoritativeSnapshot: GameSnapshot;
+  private presentationSnapshot: GameSnapshot;
+  private networkState: NetworkHudSnapshot;
+  private inputSequence = 0;
+  private lastInputSignature = '';
+  private lastInputSentAt = 0;
+  private unsubscribeHandlers: Array<() => void> = [];
+  private running = false;
+  private animationId = 0;
+  private readonly networkSession: NetworkBattleSession;
+  private correctionState: CorrectionState | null = null;
 
   public input = new InputHandler();
   public onExplosion?: (x: number, y: number) => void;
   public onBossExplosion?: (x: number, y: number) => void;
-  public cinematicFocus: { x: number, y: number, timer: number, maxTimer: number } | null = null;
-  private timeScale = 1.0;
-  
-  // View/React binds to this
-  public onSnapshotUpdated?: (snapshot: GameSnapshot) => void;
-
-  private running = false;
-  private animationId = 0;
+  public onSnapshotUpdated?: (snapshot: GameViewSnapshot) => void;
 
   constructor() {
-    this.judger.onExplosion = (x, y) => {
-      if (this.onExplosion) this.onExplosion(x, y);
+    this.authoritativeSnapshot = this.createWaitingSnapshot();
+    this.presentationSnapshot = this.createWaitingSnapshot();
+    const protocol = new JsonNetworkProtocol();
+    const sessionConfig = {
+      ...readBrowserNetworkJoinConfig(),
+      protocol,
     };
+    this.networkSession = new NetworkBattleSession(sessionConfig);
+    this.networkState = this.networkSession.getState();
+
+    this.unsubscribeHandlers.push(this.networkSession.subscribe((snapshot) => {
+      this.networkState = snapshot;
+    }));
+    this.unsubscribeHandlers.push(this.networkSession.onSnapshot((payload) => {
+      this.consumeAuthoritativeSnapshot(payload);
+    }));
+    this.unsubscribeHandlers.push(this.networkSession.onCombatEvent((payload) => {
+      if (payload.position && (payload.eventType === 'fighter_destroyed' || payload.eventType === 'hit_result')) {
+        audioManager.playExplosionSound();
+        if (this.onExplosion) {
+          this.onExplosion(payload.position.x, payload.position.y);
+        }
+      }
+      if (payload.position && payload.eventType === 'fighter_destroyed' && this.onBossExplosion) {
+        this.onBossExplosion(payload.position.x, payload.position.y);
+      }
+    }));
+  }
+
+  private createWaitingSnapshot(): GameSnapshot {
+    return {
+      fps: 0,
+      player: this.battlefield.player.GetState(),
+      enemies: [],
+      missiles: [],
+      lasers: [],
+      mapBounds: this.battlefield.mapBounds,
+      status: 'playing',
+      radarRange: 1000,
+      score: 0,
+      timeScale: 1,
+      cinematicFocus: null,
+      bossSpawning: false,
+      bossIndicatorTime: 0,
+    };
+  }
+
+  private remapSnapshotToLocalPerspective(snapshot: GameSnapshot): GameSnapshot {
+    const localPlayerId = this.networkState.localPlayerId;
+    if (snapshot.player?.id === localPlayerId) {
+      return snapshot;
+    }
+
+    const localPlayerIndex = snapshot.enemies.findIndex((fighter) => fighter.id === localPlayerId);
+    if (localPlayerIndex < 0) {
+      return snapshot;
+    }
+
+    const localPlayer = {
+      ...snapshot.enemies[localPlayerIndex],
+      isPlayer: true,
+      inRadarRange: true,
+    };
+    const swappedEnemies = snapshot.enemies.filter((_, index) => index !== localPlayerIndex);
+    if (snapshot.player) {
+      swappedEnemies.push({
+        ...snapshot.player,
+        isPlayer: false,
+      });
+    }
+
+    const normalizedEnemies = swappedEnemies.map((fighter) => ({
+      ...fighter,
+      isPlayer: false,
+      inRadarRange: Math.hypot(fighter.x - localPlayer.x, fighter.y - localPlayer.y) <= snapshot.radarRange,
+    }));
+
+    return {
+      ...snapshot,
+      player: localPlayer,
+      enemies: normalizedEnemies,
+    };
+  }
+
+  private consumeAuthoritativeSnapshot(payload: StateSnapshotPayload): void {
+    const localizedState = this.remapSnapshotToLocalPerspective(payload.state);
+    const nextAuthoritativeSnapshot = {
+      ...localizedState,
+      fps: this.fps,
+    };
+
+    if (this.presentationSnapshot.player && nextAuthoritativeSnapshot.player) {
+      const playerDistance = Math.hypot(
+        this.presentationSnapshot.player.x - nextAuthoritativeSnapshot.player.x,
+        this.presentationSnapshot.player.y - nextAuthoritativeSnapshot.player.y,
+      );
+
+      if (playerDistance >= 240) {
+        this.networkSession.requestResync('state_divergence');
+        this.correctionState = null;
+      } else if (playerDistance >= 40) {
+        this.correctionState = {
+          from: { ...this.presentationSnapshot.player },
+          to: { ...nextAuthoritativeSnapshot.player },
+          startedAtMs: performance.now(),
+          durationMs: CORRECTION_DURATION_MS,
+        };
+      } else {
+        this.correctionState = null;
+      }
+    } else {
+      this.correctionState = null;
+    }
+
+    this.authoritativeSnapshot = nextAuthoritativeSnapshot;
+  }
+
+  private refreshPresentationSnapshot(dtSeconds: number, nowMs: number): void {
+    const nextSnapshot: GameSnapshot = {
+      ...this.authoritativeSnapshot,
+      player: this.authoritativeSnapshot.player ? { ...this.authoritativeSnapshot.player } : null,
+      enemies: this.authoritativeSnapshot.enemies.map((enemy) => ({ ...enemy })),
+      missiles: this.authoritativeSnapshot.missiles.map((missile) => ({ ...missile })),
+      lasers: this.authoritativeSnapshot.lasers.map((laser) => ({ ...laser })),
+      fps: this.fps,
+    };
+
+    if (!nextSnapshot.player) {
+      this.presentationSnapshot = nextSnapshot;
+      return;
+    }
+
+    if (this.correctionState && this.correctionState.to.id === nextSnapshot.player.id) {
+      const elapsedMs = nowMs - this.correctionState.startedAtMs;
+      const progress = Math.min(Math.max(elapsedMs / this.correctionState.durationMs, 0), 1);
+      nextSnapshot.player = interpolateFighterCorrection(this.correctionState.from, this.correctionState.to, progress);
+      if (progress >= 1) {
+        this.correctionState = null;
+      }
+      this.presentationSnapshot = nextSnapshot;
+      return;
+    }
+
+    if (this.networkState.connectionState === 'connected' && this.networkState.roomPhase === 'running') {
+      nextSnapshot.player = predictLocalFighter(
+        nextSnapshot.player,
+        this.buildNetworkInput(),
+        dtSeconds,
+        nextSnapshot.mapBounds,
+        PREDICTION_CONFIG,
+      );
+    }
+
+    this.presentationSnapshot = nextSnapshot;
   }
 
   private updateLoop = (timestamp: number) => {
     if (!this.running) return;
     const realDt = (timestamp - this.lastTime) / 1000;
     this.lastTime = timestamp;
-    if (realDt > 0 && realDt < 0.1) { // Cap dt to avoid huge jumps
-      if (this.cinematicFocus) {
-         this.cinematicFocus.timer -= realDt;
-         if (this.cinematicFocus.timer <= 0) {
-           this.cinematicFocus = null;
-           this.timeScale = 1.0;
-         }
-      }
-      
-      const dt = realDt * this.timeScale;
+
+    if (realDt > 0 && realDt < 0.1) {
       this.fps = Math.floor(1 / realDt);
-      if (this.status === 'playing') {
-        this.updateFrame(dt);
-      }
+      this.pushCurrentInput(Date.now());
+      this.refreshPresentationSnapshot(realDt, timestamp);
     }
-    
-    // Push strict data downwards to the View layer (MVC Constraint)
+
     if (this.onSnapshotUpdated) {
-      this.onSnapshotUpdated(this.getSnapshot());
+      this.onSnapshotUpdated(this.getViewSnapshot());
     }
 
     this.animationId = requestAnimationFrame(this.updateLoop);
@@ -277,189 +439,85 @@ export class GameEngine {
   start() {
     this.running = true;
     this.lastTime = performance.now();
+    this.networkSession.connect();
     this.animationId = requestAnimationFrame(this.updateLoop);
   }
 
   stop() {
     this.running = false;
     cancelAnimationFrame(this.animationId);
+    this.networkSession.disconnect('客户端停止渲染循环');
+    this.unsubscribeHandlers.forEach((dispose) => dispose());
+    this.unsubscribeHandlers = [];
   }
 
-  private updateFrame(dt: number) {
-    const p = this.battlefield.player;
-    
-    // Player is always rendered at the center of the window by the View layer
+  private buildNetworkInput(): NetworkPlayerInput {
     const centerX = window.innerWidth / 2;
     const centerY = window.innerHeight / 2;
-    let targetHeading = p.heading;
-    
-    if (this.input.mousePos.x !== 0 || this.input.mousePos.y !== 0) {
-       targetHeading = Math.atan2(
-         this.input.mousePos.y - centerY,
-         this.input.mousePos.x - centerX
-       );
-       p.heading = targetHeading;
-    }
-    
-    // WASD Movement
-    let moveX = 0;
-    let moveY = 0;
-    if (this.input.keys['KeyA']) moveX -= 1;
-    if (this.input.keys['KeyD']) moveX += 1;
-    if (this.input.keys['KeyW']) moveY -= 1;
-    if (this.input.keys['KeyS']) moveY += 1;
+    const hasMouseAim = this.input.mousePos.x !== 0 || this.input.mousePos.y !== 0;
+    const aimHeading = hasMouseAim
+      ? Math.atan2(this.input.mousePos.y - centerY, this.input.mousePos.x - centerX)
+      : null;
 
-    if (moveX !== 0 || moveY !== 0) {
-      const mag = Math.sqrt(moveX * moveX + moveY * moveY);
-      moveX /= mag;
-      moveY /= mag;
-      p.velocity.x = moveX * p.maxSpeed;
-      p.velocity.y = moveY * p.maxSpeed;
-      p.speed = p.maxSpeed; // purely visual now for HUD
-    } else {
-      // Decelerate quickly if no input
-      p.velocity.x *= Math.pow(0.1, dt);
-      p.velocity.y *= Math.pow(0.1, dt);
-      p.speed = p.velocity.mag();
+    return {
+      throttle: this.input.keys['KeyW'] || this.input.keys['ArrowUp']
+        ? 'accelerate'
+        : (this.input.keys['KeyS'] || this.input.keys['ArrowDown'] ? 'decelerate' : 'hold'),
+      turn: this.input.keys['KeyA'] || this.input.keys['ArrowLeft']
+        ? 'left'
+        : (this.input.keys['KeyD'] || this.input.keys['ArrowRight'] ? 'right' : 'hold'),
+      fireMissile: Boolean(this.input.keys['Space'] || this.input.mouseDown),
+      fireBomb: this.input.rightMousePressed,
+      targetId: null,
+      aimHeading,
+    };
+  }
+
+  private pushCurrentInput(nowMs: number): void {
+    if (this.networkState.connectionState !== 'connected') {
+      return;
+    }
+    if (this.networkState.roomPhase !== 'running') {
+      return;
     }
 
-    // Dash
+    const currentInput = this.buildNetworkInput();
+    const inputSignature = JSON.stringify(currentInput);
+    const shouldSend = inputSignature !== this.lastInputSignature || nowMs - this.lastInputSentAt >= 100;
+    if (!shouldSend) {
+      return;
+    }
+
+    this.inputSequence += 1;
+    const acknowledgedTick = this.networkState.lastServerTick ?? 0;
+    this.networkSession.sendPlayerInput(
+      currentInput,
+      acknowledgedTick + 1,
+      acknowledgedTick,
+      this.inputSequence,
+    );
+    this.lastInputSignature = inputSignature;
+    this.lastInputSentAt = nowMs;
+
     if (this.input.rightMousePressed) {
-      if (p.dashCooldown <= 0) {
-         audioManager.playDashSound();
-         this.score += 5;
-      }
-      p.Dash(targetHeading);
       this.input.rightMousePressed = false;
     }
-
-    // Fire continuous
-    if (this.input.keys['Space'] || this.input.mouseDown) {
-      const m = p.Fire(undefined, targetHeading);
-      if (m) {
-        audioManager.playShootSound();
-        (m as any).isPlayerMissile = true;
-        this.battlefield.missiles.push(m as Missile);
-      }
-    }
-
-    // 更新各实体
-    p.Update(dt, this.battlefield.mapBounds);
-    
-    const actions = this.ai.Decide(dt, this.battlefield.enemies, p) as any;
-    if (actions && actions.missiles) {
-        actions.missiles.forEach((m: Missile) => {
-           audioManager.playShootSound();
-           this.battlefield.missiles.push(m);
-        });
-    }
-    if (actions && actions.lasers) {
-        actions.lasers.forEach((l: Laser) => {
-           audioManager.playShootSound(); // Maybe a different charging sound
-           this.battlefield.lasers.push(l);
-        });
-    }
-
-    this.battlefield.enemies.forEach(e => e.Update(dt, this.battlefield.mapBounds));
-    this.battlefield.missiles.forEach(m => m.Update(dt));
-    this.battlefield.lasers.forEach(l => {
-      // Lasers move with boss if it's attached, but let's just make it a static beam for now
-      l.Update(dt);
-    });
-
-    // Endless Spawning
-    this.timeSinceLastSpawn += dt;
-    if (this.timeSinceLastSpawn >= 2 + Math.random()) {
-      this.timeSinceLastSpawn = 0;
-      const count = Math.random() > 0.5 ? 2 : 1;
-      for (let i = 0; i < count; i++) {
-        const enemy = new Fighter(false, false);
-        enemy.position = new Vector2D(
-          Math.random() < 0.5 ? 100 : this.battlefield.mapBounds.width - 100,
-          Math.random() * this.battlefield.mapBounds.height
-        );
-        this.battlefield.enemies.push(enemy);
-      }
-    }
-    
-    // Boss Spawning Condition
-    if (this.bossCooldownTimer > 0) {
-       this.bossCooldownTimer -= dt;
-    }
-
-    if (this.bossSpawning) {
-       this.bossSpawnTimer -= dt;
-       if (this.bossSpawnTimer <= 0) {
-          this.bossSpawning = false;
-          this.lastBossScore = this.score;
-          const boss = new Fighter(false, true);
-          boss.position = new Vector2D(this.battlefield.mapBounds.width / 2, 100); // spawn inside screen
-          this.battlefield.enemies.push(boss);
-          this.bossIndicatorTimer = 3.0;
-       }
-    } else if (this.bossCooldownTimer <= 0 && this.score >= this.lastBossScore + 100 && !this.battlefield.enemies.some((e) => (e as any).isBoss)) {
-       this.bossSpawning = true;
-       this.bossSpawnTimer = 3.0; // 3 seconds warning
-       audioManager.playBossWarningSound();
-    }
-
-    if (this.bossIndicatorTimer > 0) {
-       this.bossIndicatorTimer -= dt;
-    }
-
-    // 雷达扫描
-    this.radar.Scan(
-      new Vector2D(p.position.x, p.position.y), 
-      this.battlefield.enemies
-    );
-
-    // 清理死亡单位
-    this.battlefield.missiles = this.battlefield.missiles.filter(m => m.isActive);
-    this.battlefield.enemies = this.battlefield.enemies.filter(e => e.hp > 0);
-    this.battlefield.lasers = this.battlefield.lasers.filter(l => l.state !== 'done');
-
-    // 碰撞计算进入异步任务队列
-    this.judger.CheckCollision(
-      this.battlefield.missiles, 
-      this.battlefield.lasers,
-      [p, ...this.battlefield.enemies],
-      (killerIsPlayer, isBoss, x, y) => {
-        if (isBoss) {
-           this.cinematicFocus = { x, y, timer: 3.0, maxTimer: 3.0 }; // 3 real seconds
-           this.timeScale = 0.05; // 20x slower
-           if (this.onBossExplosion) this.onBossExplosion(x, y);
-           this.bossCooldownTimer = 10.0;
-           this.lastBossScore = this.score + 50; // Add score from death to maintain the relative 100 offset
-        } else {
-           if (this.onExplosion) this.onExplosion(x, y);
-           audioManager.playExplosionSound();
-        }
-        
-        if (killerIsPlayer && p.hp > 0) {
-          p.dashCooldown = 0; // 重置冷却
-          this.score += isBoss ? 50 : 10;
-        }
-      }
-    );
-
-    this.status = this.judger.UpdateBattleStatus(p, this.battlefield.enemies);
   }
 
   public getSnapshot(): GameSnapshot {
     return {
+      ...this.presentationSnapshot,
       fps: this.fps,
-      player: this.battlefield.player.GetState(),
-      enemies: this.battlefield.enemies.map(e => e.GetState()),
-      missiles: this.battlefield.missiles.map(m => m.GetState()),
-      lasers: this.battlefield.lasers.map(l => l.GetState()),
-      mapBounds: this.battlefield.mapBounds,
-      status: this.status,
-      radarRange: this.radar.range,
-      score: this.score,
-      timeScale: this.timeScale,
-      cinematicFocus: this.cinematicFocus,
-      bossSpawning: this.bossSpawning,
-      bossIndicatorTime: this.bossIndicatorTimer
+    };
+  }
+
+  public getViewSnapshot(): GameViewSnapshot {
+    return {
+      game: this.getSnapshot(),
+      network: {
+        ...this.networkState,
+        remotePlayers: [...this.networkState.remotePlayers],
+      },
     };
   }
 }
