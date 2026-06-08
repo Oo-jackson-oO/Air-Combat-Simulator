@@ -68,3 +68,86 @@ npm run dev
 ```
 
 并在浏览器中打开 http://localhost:3000 进行预览和游玩。
+
+## 联机对战配置
+
+当前项目已支持第一版权威服务器联机模式，客户端会通过 WebSocket 连接本地权威服务器，并使用 URL 查询参数显式声明房间与阵营信息。
+
+### 1. 配置环境变量
+
+在项目根目录创建 `.env.local`，至少写入以下配置：
+
+```bash
+VITE_NETWORK_BATTLE_WS_URL=ws://127.0.0.1:3210/ws
+```
+
+如果该变量缺失，前端会直接报错并停止进入联机流程，不会静默回退到单机模式。
+
+### 2. 启动权威服务器
+
+在项目根目录运行：
+
+```bash
+npm run server:authoritative
+```
+
+默认会启动一个本地权威服务器，并暴露以下入口：
+
+- 健康检查：`http://127.0.0.1:3210/health`
+- 房间概览：`http://127.0.0.1:3210/rooms`
+- WebSocket 地址：`ws://127.0.0.1:3210/ws`
+
+### 3. 启动前端
+
+另开一个终端运行：
+
+```bash
+npm run dev
+```
+
+默认前端地址为 `http://127.0.0.1:3000/`。
+
+### 4. 进入联机房间
+
+联机模式要求通过 URL 查询参数显式提供以下字段：
+
+- `roomId`：房间号，例如 `room-alpha`
+- `playerName`：玩家名称
+- `faction`：阵营，只允许 `red` 或 `blue`
+
+可以直接使用下面两个地址在两个浏览器窗口中联机测试：
+
+```text
+http://127.0.0.1:3000/?roomId=room-alpha&playerName=红方玩家&faction=red
+http://127.0.0.1:3000/?roomId=room-alpha&playerName=蓝方玩家&faction=blue
+```
+
+进入后，客户端会自动执行以下流程：
+
+1. 连接权威服务器并发送 `MSG_ROOM_JOIN`
+2. 收到房间状态后自动发送 `MSG_PLAYER_READY`
+3. 房间进入 `running` 后开始上传输入并消费权威快照
+4. 在 HUD 中显示连接状态、同步状态、延迟、房间号和对端玩家信息
+
+## 联机验证命令
+
+网络对战相关改动可通过以下命令验证：
+
+```bash
+npm run lint
+npm run build
+npm run test:network-protocol
+npm run test:network-server
+npm run test:network-sync
+npm run test:network-transport
+```
+
+## 当前联机范围
+
+当前仓库实现的是“权威服务器 + JSON 节拍同步”的第一版联机模型，重点覆盖以下能力：
+
+- 权威服务器房间管理与固定节拍推进
+- 客户端输入上传与权威快照消费
+- 弱网场景下的乱序检测、重复过滤、平滑纠偏与重同步
+
+当前版本仍以本地开发和双端验证为主，适合课程演示、结构分析和后续扩展，不包含公网部署、账号系统和复杂匹配大厅。
