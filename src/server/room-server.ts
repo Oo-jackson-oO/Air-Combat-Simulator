@@ -1,6 +1,7 @@
 import type { AuthoritativeSimulationConfig } from '../game/authoritative-simulation.ts';
 import { JsonNetworkProtocol } from '../game/network-protocol.ts';
 import {
+    type HeartbeatMessage,
     NetMessageType,
     type NetworkMessage,
     type PlayerInputMessage,
@@ -55,6 +56,11 @@ export class AuthoritativeRoomServer {
 
     handleClientMessage(session: ServerSession, message: NetworkMessage): void {
         if (message.type === NetMessageType.MSG_ROOM_JOIN) {
+            const existingBinding = this.sessionBindings.get(session.connectionId);
+            if (existingBinding) {
+                throw new Error(`连接 ${session.connectionId} 已绑定到房间 ${existingBinding.roomId} 的玩家 ${existingBinding.playerId}`);
+            }
+
             const room = this.getOrCreateRoom(message.roomId);
             room.join(session, message as RoomJoinMessage);
             this.sessionBindings.set(session.connectionId, {
@@ -62,6 +68,16 @@ export class AuthoritativeRoomServer {
                 playerId: message.playerId,
             });
             return;
+        }
+
+        const binding = this.sessionBindings.get(session.connectionId);
+        if (!binding) {
+            throw new Error(`连接 ${session.connectionId} 尚未完成房间绑定`);
+        }
+        if (binding.roomId !== message.roomId || binding.playerId !== message.playerId) {
+            throw new Error(
+                `连接身份与消息不一致：连接 ${session.connectionId} 绑定到 ${binding.roomId}/${binding.playerId}，收到 ${message.roomId}/${message.playerId}`,
+            );
         }
 
         const room = this.rooms.get(message.roomId);
@@ -81,6 +97,7 @@ export class AuthoritativeRoomServer {
                 room.sendResync(message as ResyncRequestMessage);
                 break;
             case NetMessageType.MSG_HEARTBEAT:
+                this.replyHeartbeat(session, room, message as HeartbeatMessage);
                 break;
             default:
                 throw new Error(`服务端暂不支持消息类型 ${message.type}`);
@@ -133,5 +150,22 @@ export class AuthoritativeRoomServer {
         const room = new AuthoritativeRoom(roomConfig);
         this.rooms.set(roomId, room);
         return room;
+    }
+
+    private replyHeartbeat(session: ServerSession, room: AuthoritativeRoom, message: HeartbeatMessage): void {
+        session.send(this.protocol.Serialize({
+            type: NetMessageType.MSG_HEARTBEAT,
+            version: 1,
+            roomId: message.roomId,
+            playerId: 'server',
+            tick: room.getCurrentTick(),
+            inputSequence: message.inputSequence,
+            sentAt: Date.now(),
+            payload: {
+                pingMs: Math.max(0, Date.now() - message.sentAt),
+                serverTime: Date.now(),
+                acknowledgedTick: room.getCurrentTick(),
+            },
+        }));
     }
 }

@@ -272,7 +272,7 @@ export class AuthoritativeRoom {
             payload: {
                 fromTick: requestedHistory.tick,
                 toTick: latestHistory.tick,
-                snapshot: latestHistory.snapshot,
+                snapshot: this.simulation.buildSnapshotForPlayer(message.playerId),
                 recentEvents,
             },
         });
@@ -316,21 +316,23 @@ export class AuthoritativeRoom {
     }
 
     private broadcastSnapshot(stepResult: AuthoritativeSimulationStepResult): void {
-        this.broadcastMessage({
-            type: NetMessageType.MSG_STATE_SNAPSHOT,
-            version: 1,
-            roomId: this.config.roomId,
-            playerId: 'server',
-            tick: stepResult.serverTick,
-            inputSequence: stepResult.lastProcessedInputSequence,
-            sentAt: Date.now(),
-            payload: {
-                snapshotId: `${this.config.roomId}-${stepResult.serverTick}`,
-                serverTick: stepResult.serverTick,
-                lastProcessedInputSequence: stepResult.lastProcessedInputSequence,
-                state: stepResult.snapshot,
-            },
-        });
+        for (const playerId of this.sessions.keys()) {
+            this.sendToPlayer(playerId, {
+                type: NetMessageType.MSG_STATE_SNAPSHOT,
+                version: 1,
+                roomId: this.config.roomId,
+                playerId: 'server',
+                tick: stepResult.serverTick,
+                inputSequence: stepResult.lastProcessedInputSequence,
+                sentAt: Date.now(),
+                payload: {
+                    snapshotId: `${this.config.roomId}-${stepResult.serverTick}`,
+                    serverTick: stepResult.serverTick,
+                    lastProcessedInputSequence: stepResult.lastProcessedInputSequence,
+                    state: this.simulation.buildSnapshotForPlayer(playerId),
+                },
+            });
+        }
     }
 
     private broadcastEvents(stepResult: AuthoritativeSimulationStepResult): void {

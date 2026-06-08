@@ -201,5 +201,173 @@ function testAuthoritativeRoomServerFlow(): void {
     server.stop();
 }
 
+function testRejectsSessionSpoofing(): void {
+    const server = new AuthoritativeRoomServer(createServerConfig());
+    const redSession = new MemoryServerSession('conn-red');
+    const blueSession = new MemoryServerSession('conn-blue');
+
+    server.handleClientMessage(redSession, createMessage({
+        type: NetMessageType.MSG_ROOM_JOIN,
+        version: 1,
+        roomId: 'room-alpha',
+        playerId: 'player-red',
+        tick: 0,
+        inputSequence: 0,
+        sentAt: 1,
+        payload: {
+            roomId: 'room-alpha',
+            playerId: 'player-red',
+            playerName: '红方玩家',
+            faction: 'red',
+        },
+    }));
+    server.handleClientMessage(blueSession, createMessage({
+        type: NetMessageType.MSG_ROOM_JOIN,
+        version: 1,
+        roomId: 'room-alpha',
+        playerId: 'player-blue',
+        tick: 0,
+        inputSequence: 0,
+        sentAt: 2,
+        payload: {
+            roomId: 'room-alpha',
+            playerId: 'player-blue',
+            playerName: '蓝方玩家',
+            faction: 'blue',
+        },
+    }));
+
+    assert.throws(() => {
+        server.handleClientMessage(blueSession, createMessage({
+            type: NetMessageType.MSG_PLAYER_READY,
+            version: 1,
+            roomId: 'room-alpha',
+            playerId: 'player-red',
+            tick: 0,
+            inputSequence: 1,
+            sentAt: 3,
+            payload: {
+                ready: true,
+                readyPlayers: ['player-red'],
+            },
+        }));
+    }, /连接身份|会话/);
+
+    server.stop();
+}
+
+function testBroadcastsLocalizedSnapshotsPerPlayerPerspective(): void {
+    const server = new AuthoritativeRoomServer(createServerConfig());
+    const redSession = new MemoryServerSession('conn-red');
+    const blueSession = new MemoryServerSession('conn-blue');
+
+    server.handleClientMessage(redSession, createMessage({
+        type: NetMessageType.MSG_ROOM_JOIN,
+        version: 1,
+        roomId: 'room-alpha',
+        playerId: 'player-red',
+        tick: 0,
+        inputSequence: 0,
+        sentAt: 1,
+        payload: {
+            roomId: 'room-alpha',
+            playerId: 'player-red',
+            playerName: '红方玩家',
+            faction: 'red',
+        },
+    }));
+    server.handleClientMessage(blueSession, createMessage({
+        type: NetMessageType.MSG_ROOM_JOIN,
+        version: 1,
+        roomId: 'room-alpha',
+        playerId: 'player-blue',
+        tick: 0,
+        inputSequence: 0,
+        sentAt: 2,
+        payload: {
+            roomId: 'room-alpha',
+            playerId: 'player-blue',
+            playerName: '蓝方玩家',
+            faction: 'blue',
+        },
+    }));
+
+    server.handleClientMessage(redSession, createMessage({
+        type: NetMessageType.MSG_PLAYER_READY,
+        version: 1,
+        roomId: 'room-alpha',
+        playerId: 'player-red',
+        tick: 0,
+        inputSequence: 1,
+        sentAt: 3,
+        payload: {
+            ready: true,
+            readyPlayers: ['player-red'],
+        },
+    }));
+    server.handleClientMessage(blueSession, createMessage({
+        type: NetMessageType.MSG_PLAYER_READY,
+        version: 1,
+        roomId: 'room-alpha',
+        playerId: 'player-blue',
+        tick: 0,
+        inputSequence: 1,
+        sentAt: 4,
+        payload: {
+            ready: true,
+            readyPlayers: ['player-red', 'player-blue'],
+        },
+    }));
+
+    const room = server.getRoom('room-alpha');
+    assert.ok(room, '房间应存在');
+    room.runTick();
+
+    server.handleClientMessage(blueSession, createMessage({
+        type: NetMessageType.MSG_PLAYER_INPUT,
+        version: 1,
+        roomId: 'room-alpha',
+        playerId: 'player-blue',
+        tick: 2,
+        inputSequence: 2,
+        sentAt: 5,
+        payload: {
+            acknowledgedTick: 1,
+            input: {
+                throttle: 'hold',
+                turn: 'hold',
+                fireMissile: true,
+                fireBomb: false,
+                targetId: 'player-red',
+                aimHeading: Math.PI,
+            },
+        },
+    }));
+    room.runTick();
+    room.stop();
+
+    const redSnapshots = filterMessagesByType<StateSnapshotMessage>(
+        redSession.readMessages(server.getProtocol()),
+        NetMessageType.MSG_STATE_SNAPSHOT,
+    );
+    const blueSnapshots = filterMessagesByType<StateSnapshotMessage>(
+        blueSession.readMessages(server.getProtocol()),
+        NetMessageType.MSG_STATE_SNAPSHOT,
+    );
+    const latestRedSnapshot = redSnapshots[redSnapshots.length - 1];
+    const latestBlueSnapshot = blueSnapshots[blueSnapshots.length - 1];
+
+    assert.equal(latestRedSnapshot.payload.state.player?.id, 'player-red');
+    assert.equal(latestBlueSnapshot.payload.state.player?.id, 'player-blue');
+    assert.equal(latestRedSnapshot.payload.state.missiles.length, 1);
+    assert.equal(latestBlueSnapshot.payload.state.missiles.length, 1);
+    assert.equal(latestRedSnapshot.payload.state.missiles[0].isPlayerMissile, false);
+    assert.equal(latestBlueSnapshot.payload.state.missiles[0].isPlayerMissile, true);
+
+    server.stop();
+}
+
 testAuthoritativeRoomServerFlow();
+testRejectsSessionSpoofing();
+testBroadcastsLocalizedSnapshotsPerPlayerPerspective();
 console.log('room-server tests passed');

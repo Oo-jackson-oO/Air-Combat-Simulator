@@ -191,6 +191,42 @@ export class AuthoritativeBattleSimulation {
         return this.currentTick;
     }
 
+    buildSnapshotForPlayer(playerId: string): GameSnapshot {
+        const localFighter = this.fighters.find((fighter) => fighter.playerId === playerId) ?? null;
+
+        if (!localFighter) {
+            return this.buildSnapshot();
+        }
+
+        const enemySnapshots: FighterSnapshot[] = [];
+        for (const fighter of this.fighters) {
+            if (fighter.playerId === localFighter.playerId || fighter.faction === localFighter.faction) {
+                continue;
+            }
+
+            enemySnapshots.push(this.toFighterSnapshot(fighter, localFighter));
+        }
+
+        return {
+            fps: this.config.snapshotFps,
+            player: this.toFighterSnapshot(localFighter, localFighter),
+            enemies: enemySnapshots,
+            missiles: this.missiles.map((missile) => this.toMissileSnapshot(missile, localFighter.faction)),
+            lasers: [],
+            mapBounds: {
+                width: this.config.mapWidth,
+                height: this.config.mapHeight,
+            },
+            status: this.status,
+            radarRange: this.config.radarRange,
+            score: this.score,
+            timeScale: 1,
+            cinematicFocus: null,
+            bossSpawning: false,
+            bossIndicatorTime: 0,
+        };
+    }
+
     /**
      * 每个逻辑节拍只消费当前节拍对应的输入，再统一推进玩家、AI、导弹和命中判定。
      */
@@ -504,7 +540,7 @@ export class AuthoritativeBattleSimulation {
             fps: this.config.snapshotFps,
             player: primaryFighter ? this.toFighterSnapshot(primaryFighter, playerPosition) : null,
             enemies: enemySnapshots,
-            missiles: this.missiles.map((missile) => this.toMissileSnapshot(missile)),
+            missiles: this.missiles.map((missile) => this.toMissileSnapshot(missile, primaryFighter?.faction ?? 'red')),
             lasers: [],
             mapBounds: {
                 width: this.config.mapWidth,
@@ -545,13 +581,13 @@ export class AuthoritativeBattleSimulation {
         };
     }
 
-    private toMissileSnapshot(missile: SimulationMissile): MissileSnapshot {
+    private toMissileSnapshot(missile: SimulationMissile, localFaction: NetworkFaction): MissileSnapshot {
         return {
             id: missile.id,
             x: missile.x,
             y: missile.y,
             heading: missile.heading,
-            isPlayerMissile: missile.ownerFaction === 'red',
+            isPlayerMissile: missile.ownerFaction === localFaction,
         };
     }
 }

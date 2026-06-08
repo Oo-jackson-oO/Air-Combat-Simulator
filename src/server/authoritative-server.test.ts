@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 
 import WebSocket from 'ws';
 
-import { NetMessageType, type NetworkMessage, type RoomStateMessage, type StateSnapshotMessage } from '../game/interfaces.ts';
+import { NetMessageType, type HeartbeatMessage, type NetworkMessage, type RoomStateMessage, type StateSnapshotMessage } from '../game/interfaces.ts';
 import { startAuthoritativeServer } from './index.ts';
 
 function createServerConfig() {
@@ -180,5 +180,66 @@ async function testWebSocketTransportBridgesClientsToRoomServer(): Promise<void>
     }
 }
 
+async function testHeartbeatRoundTrip(): Promise<void> {
+    const server = startAuthoritativeServer(createServerConfig(), 0);
+    const protocol = server.roomServer.getProtocol();
+    const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+
+    try {
+        await waitForOpen(socket);
+
+        socket.send(protocol.Serialize({
+            type: NetMessageType.MSG_ROOM_JOIN,
+            version: 1,
+            roomId: 'room-heartbeat',
+            playerId: 'player-red',
+            tick: 0,
+            inputSequence: 0,
+            sentAt: Date.now(),
+            payload: {
+                roomId: 'room-heartbeat',
+                playerId: 'player-red',
+                playerName: '红方玩家',
+                faction: 'red',
+            },
+        }));
+
+        await waitForMessage<RoomStateMessage>(
+            socket,
+            (message): message is RoomStateMessage => message.type === NetMessageType.MSG_ROOM_STATE,
+            (payload) => protocol.Deserialize(payload),
+        );
+
+        const heartbeatPromise = waitForMessage<HeartbeatMessage>(
+            socket,
+            (message): message is HeartbeatMessage => message.type === NetMessageType.MSG_HEARTBEAT,
+            (payload) => protocol.Deserialize(payload),
+        );
+
+        socket.send(protocol.Serialize({
+            type: NetMessageType.MSG_HEARTBEAT,
+            version: 1,
+            roomId: 'room-heartbeat',
+            playerId: 'player-red',
+            tick: 0,
+            inputSequence: 1,
+            sentAt: Date.now(),
+            payload: {
+                pingMs: 0,
+                serverTime: Date.now(),
+                acknowledgedTick: 0,
+            },
+        }));
+
+        const heartbeat = await heartbeatPromise;
+        assert.equal(heartbeat.playerId, 'server');
+        assert.equal(heartbeat.roomId, 'room-heartbeat');
+    } finally {
+        socket.close();
+        await server.close();
+    }
+}
+
 await testWebSocketTransportBridgesClientsToRoomServer();
+await testHeartbeatRoundTrip();
 console.log('authoritative-server tests passed');
